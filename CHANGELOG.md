@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Opted-in Dori monitors can restart unexpectedly exited receiver processes with a bounded retry policy. The policy survives session resume and managed handoff; clean exits, explicit stops, and monitors without the policy retain their existing behavior.
+
 - Document opt-in GPT-6.2 Sol Ultrafast defaults for external OMP 19 lanes and cover the alias in the GPT-6.2 prompt integration. Explicit external commands no longer require a consumer-native receipt; managed launchers retain receipt checks and their pinned runtime.
 
 - Reuse an already-published ULW candidate after unrelated main changes only after verifying its canonical PR, accepted parent and exact metadata-only tree. Preserve closed decisions and exact-head CI deduplication without rewriting branches or repeating Git object uploads.

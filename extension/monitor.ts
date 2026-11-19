@@ -4,6 +4,7 @@
  * expects; omp has no built-in equivalent.
  */
 import type { Subprocess } from "bun";
+import type { MonitorSpec } from "../src/update/deployment-types.ts";
 import { MonitorOutputFile, readMonitorOutput } from "./monitor-output";
 
 /** Lines arriving within this window after the first one are delivered together. */
@@ -21,6 +22,9 @@ type Running = {
   /** Session the monitor was started in; its lines are delivered only while that session is current. */
   readonly session: string;
   readonly signal: AbortSignal;
+  readonly restart?: MonitorSpec["restart"];
+  readonly startedAt: number;
+  readonly attempt: number;
   stopped: boolean;
 };
 
@@ -30,6 +34,7 @@ export type MonitorInfo = {
   readonly filter: string;
   readonly pid: number;
   readonly cwd: string;
+  readonly restart?: MonitorSpec["restart"];
 };
 
 export type MonitorDelivery = {
@@ -41,6 +46,7 @@ type Deliver = (content: string, delivery: MonitorDelivery) => unknown;
 
 export class Monitors {
   readonly #running = new Map<string, Running>();
+  readonly #restarts = new Map<string, { entry: Running; timer: Timer }>();
   #pending: Array<{ readonly entry: Running; readonly text: string }> = [];
   #timer: Timer | undefined;
   #pendingBytes = 0;
@@ -49,16 +55,29 @@ export class Monitors {
   readonly #deliver: Deliver;
   readonly #currentSession: () => string | undefined;
   readonly #batchMs: number;
+  readonly #restartMs: number;
 
-  constructor(deliver: Deliver, currentSession: () => string | undefined, batchMs = BATCH_MS) {
+  constructor(deliver: Deliver, currentSession: () => string | undefined, batchMs = BATCH_MS, restartMs = 5_000) {
     this.#deliver = deliver;
     this.#currentSession = currentSession;
     this.#batchMs = batchMs;
+    this.#restartMs = restartMs;
+  }
+  start(
+    name: string,
+    argv: readonly string[],
+    filter: string,
+    cwd: string,
+    session: string,
+    restart?: MonitorSpec["restart"],
+  ): MonitorInfo {
+    if (!name) throw new Error("monitor name is required");
+    if (this.#running.has(name) || this.#restarts.has(name))
+      throw new Error(`monitor "${name}" is already running or waiting to restart; stop it first`);
+    return this.#spawn({ name, argv, filter, cwd, restart }, session, 0);
   }
 
-  start(name: string, argv: readonly string[], filter: string, cwd: string, session: string): MonitorInfo {
-    if (!name) throw new Error("monitor name is required");
-    if (this.#running.has(name)) throw new Error(`monitor "${name}" is already running; stop it first`);
+  #spawn({ name, argv, filter, cwd, restart }: MonitorSpec, session: string, attempt: number): MonitorInfo {
     if (argv.length === 0) throw new Error("argv must name the command to run");
     const pattern = new RegExp(filter);
     const proc = Bun.spawn([...argv], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -71,12 +90,17 @@ export class Monitors {
       session,
       signal: this.#generation.signal,
       stopped: false,
+      restart,
+      startedAt: performance.now(),
+      attempt,
     };
     this.#running.set(name, entry);
     void Promise.all([this.#pump(entry, proc.stdout, "stdout"), this.#pump(entry, proc.stderr, "stderr"), proc.exited])
       .then(async ([, , code]) => {
-        if (this.#running.get(name) === entry) this.#running.delete(name);
-        if (entry.stopped) return;
+        if (this.#running.get(name) !== entry) return;
+        this.#running.delete(name);
+        if (entry.stopped || !this.#current(entry)) return;
+        if (restart === "on-failure" && (code !== 0 || proc.signalCode) && this.#scheduleRestart(entry)) return;
         await this.#queue(
           entry,
           `[${name}] monitor exited (${proc.signalCode ? `signal ${proc.signalCode}` : `code ${code}`}): ${argv.join(" ")}`,
@@ -93,10 +117,44 @@ export class Monitors {
         );
       })
       .catch((error: unknown) => console.error("monitor failure reporting failed", error));
-    return { name, argv: entry.argv, filter, cwd, pid: proc.pid };
+    return { name, argv: entry.argv, filter, cwd, pid: proc.pid, ...(restart ? { restart } : {}) };
+  }
+
+  #scheduleRestart(entry: Running): boolean {
+    // A healthy minute ends a failure streak. A crashing command gets at most three automatic attempts.
+    const previous = performance.now() - entry.startedAt >= 60_000 ? 0 : entry.attempt;
+    if (previous >= 3) return false;
+    const timer = setTimeout(() => {
+      if (this.#restarts.get(entry.name)?.entry !== entry) return;
+      this.#restarts.delete(entry.name);
+      if (entry.stopped || !this.#current(entry)) return;
+      try {
+        this.#spawn({ ...entry, filter: entry.filter.source }, entry.session, previous + 1);
+      } catch (error) {
+        void this.#queue(entry, `[${entry.name}] monitor restart failed: ${String(error).slice(0, 1024)}`).catch(
+          (reportError: unknown) => console.error("monitor restart reporting failed", reportError),
+        );
+      }
+    }, this.#restartMs);
+    this.#restarts.set(entry.name, { entry, timer });
+    return true;
+  }
+
+  /** Live and scheduled specifications, without mistaking a scheduled retry for a live child. */
+  specs(): MonitorSpec[] {
+    return [...this.#running.values(), ...Array.from(this.#restarts.values(), ({ entry }) => entry)].map(
+      ({ name, argv, filter, cwd, restart }) => ({ name, argv, filter: filter.source, cwd, restart }),
+    );
   }
 
   stop(name: string): boolean {
+    const restart = this.#restarts.get(name);
+    if (restart) {
+      restart.entry.stopped = true;
+      clearTimeout(restart.timer);
+      this.#restarts.delete(name);
+      return true;
+    }
     const entry = this.#running.get(name);
     if (!entry) return false;
     entry.stopped = true;
@@ -112,6 +170,7 @@ export class Monitors {
       filter: entry.filter.source,
       pid: entry.proc.pid,
       cwd: entry.cwd,
+      ...(entry.restart ? { restart: entry.restart } : {}),
     }));
   }
 
@@ -120,6 +179,7 @@ export class Monitors {
     this.#generation.abort();
     this.#generation = new AbortController();
     for (const name of [...this.#running.keys()]) this.stop(name);
+    for (const name of this.#restarts.keys()) this.stop(name);
     clearTimeout(this.#timer);
     this.#timer = undefined;
     this.#pending = [];
@@ -229,7 +289,7 @@ export class Monitors {
 
 export const MONITOR_DESCRIPTION = [
   "Persistent background monitors for this Dori session.",
-  'op "start" runs `argv` (an argument array, never a shell string) in the session cwd and reads its stdout and stderr line by line. Every line matching the `filter` regular expression wakes this session as a message `[name] line`; lines arriving together are delivered in one message. When a monitor process exits on its own, that is reported the same way; restarting it is your decision.',
+  'op "start" runs `argv` (an argument array, never a shell string) in the session cwd and reads its stdout and stderr line by line. Matching `filter` lines wake this session as a message `[name] line`; lines arriving together are delivered in one message. Exits are reported unless an explicit `restart: "on-failure"` schedules a retry. That option retries nonzero exits or signals up to three times in a failure streak, after five seconds each. Clean exits are never retried.',
   "Lines over 64 KiB are streamed to a private temporary file instead of filtered or truncated. An immediate warning gives its path; completion gives its raw byte count. Batches are limited to 64 KiB including prefixes and separators; an oversized rendered message is preserved in a file too. Read those files for the complete output. They survive monitor stop; remove them only when no longer needed. Storage/read failure stops the monitor and reports potentially incomplete output.",
   'op "stop" kills the monitor `name` and forgets it. op "list" shows running monitors. Names are unique: starting a running name fails.',
   "Started monitors are recorded in this session. Their processes stop when omp exits, and when the session is resumed (herdr restoring it after a restart, or `omp --resume`) every monitor that was not stopped is started again and announced as `[monitor] restored ...`; you do not need to start them again.",

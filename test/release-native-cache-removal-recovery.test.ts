@@ -30,12 +30,26 @@ function partialRemoval() {
   const backup = join(c.root, "saved-source");
   renameSync(x.source, backup);
   writeFileSync(join(x.directory, "00-removal-payload"), "must be unlinked by native rm\n");
-  // Native enumeration is not lexical. Choose a subtree visited after both marker files instead of guessing its name.
-  const blocker = Array.from({ length: 256 }, (_, i) => `removal-blocked-${i}`).find((name) => {
+  // Native enumeration is not lexical. On reverse-insertion filesystems, move
+  // the marker files out and back so the blocker can be visited last there too.
+  const markers = ["receipt.json", "00-removal-payload"];
+  const blocker = Array.from({ length: 256 }, (_, i) => `removal-blocked-${i}`).find((name, i) => {
     const directory = join(x.directory, name);
+    const visitsMarkerFilesFirst = () => {
+      const order = readdirSync(x.directory);
+      return markers.every((marker) => order.indexOf(marker) < order.indexOf(name));
+    };
     mkdirSync(directory);
-    const order = readdirSync(x.directory);
-    if (order.indexOf(name) > Math.max(order.indexOf("receipt.json"), order.indexOf("00-removal-payload"))) return true;
+    if (visitsMarkerFilesFirst()) return true;
+    if (i === 0) {
+      for (const marker of markers) {
+        const path = join(x.directory, marker);
+        const moved = join(c.root, marker);
+        renameSync(path, moved);
+        renameSync(moved, path);
+      }
+      if (visitsMarkerFilesFirst()) return true;
+    }
     rmdirSync(directory);
     return false;
   });

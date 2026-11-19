@@ -211,11 +211,14 @@ for the same owner with the same state directory.
 }
 ```
 
-Use Discord's **Reply** on the bot's ASK message. For a single field, plain
-text can be enough; for multiple fields, submit a JSON object using the field
-names in the question. An invalid reply explains the error without submitting
-the form; reply to the original ASK again. A different room, a new message, or
-a reply to another question does not answer the open form.
+The bot first posts a short preparation message, then fills it in once it can
+receive replies. Use Discord's **Reply** on the completed ASK. For a single
+field, plain text can be enough; for multiple fields, submit a JSON object
+using the field names in the question. When a choice lists **Other**, you
+can include one custom text value. An invalid reply explains the error
+without submitting the form; reply to the original ASK again. A different
+room, a new message, or a reply to another question does not answer the open
+form.
 
 Local input still works and the first valid submission wins. Forms that
 cannot be represented faithfully, including password and file inputs, stay

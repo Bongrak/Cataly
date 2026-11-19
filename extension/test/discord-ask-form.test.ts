@@ -85,6 +85,9 @@ describe("Discord native ASK projection", () => {
     const optional = await project('<input name="count" type="number">');
     expect(parseAskAnswer(optional, "{}")).toEqual({ data: { count: "" } });
     expect(parseAskAnswer(optional, "")).toEqual({ error: "Enter an answer or a JSON field map." });
+    const normalized = await project('<input name="count" type="number" minlength="2">');
+    expect(parseAskAnswer(normalized, "01")).toEqual({ error: "count: Needs at least 2 characters." });
+    expect(parseAskAnswer(normalized, "010")).toEqual({ data: { count: 10 } });
   });
 
   test("validates wrong fields, disabled fields and malformed maps before submission", async () => {
@@ -124,7 +127,14 @@ describe("Discord native ASK projection", () => {
     expect(form.summary).toContain("Pick a deployment region.");
     expect(parseAskAnswer(form, "{}")).toEqual({ data: { region: "east" } });
     expect(parseAskAnswer(form, "west")).toEqual({ data: { region: "west" } });
-    expect(parseAskAnswer(form, "other")).toEqual({ error: "region: Choose only enabled values shown in the form." });
+    expect(form.summary).toContain("Other");
+    expect(parseAskAnswer(form, "  north  ")).toEqual({ data: { region: "north" } });
+    expect(parseAskAnswer(form, "old")).toEqual({ error: "region: Choose only enabled values shown in the form." });
+    const explicit = await project(`<input type="radio" name="region" value="east">
+      <label><input type="radio" name="region" value="other">Other region</label>`);
+    expect(parseAskAnswer(explicit, "north")).toEqual({
+      error: "region: Choose only enabled values shown in the form.",
+    });
     const empty = await project('<form><input name="note"><input type="radio" name="optional" value="yes"></form>');
     expect(parseAskAnswer(empty, "{}")).toEqual({ data: { note: "" } });
   });
@@ -138,6 +148,12 @@ describe("Discord native ASK projection", () => {
     expect(parseAskAnswer(form, '{"env":["dev","prod"]}')).toEqual({ data: { env: ["dev", "prod"] } });
     expect(parseAskAnswer(form, "prod")).toEqual({ data: { env: ["prod"] } });
     expect(parseAskAnswer(form, '{"env":[]}')).toEqual({ error: "env: Select at least one." });
+    expect(parseAskAnswer(form, '{"env":["qa","prod","dev"]}')).toEqual({
+      data: { env: ["dev", "prod", "qa"] },
+    });
+    expect(parseAskAnswer(form, '{"env":["qa","stage"]}')).toEqual({
+      error: "env: Choose only enabled values shown in the form.",
+    });
     expect(parseAskAnswer(form, '{"env":"dev"}')).toEqual({ error: "env: Enter an array of choice values." });
     expect(parseAskAnswer(form, '{"env":["dev",1]}')).toEqual({ error: "env: Enter an array of choice values." });
     expect(parseAskAnswer(form, '{"env":["dev","dev"]}')).toEqual({
@@ -178,14 +194,19 @@ describe("Discord native ASK projection", () => {
     expect(parseAskAnswer(choice, "new")).toEqual({ data: { mode: "new" } });
   });
 
-  test("retains option-group context and blocks disabled option groups", async () => {
+  test("keeps optgroup context and leaves ambiguous disabled groups local", async () => {
     const form = await project(`<select name="mode">
       <optgroup label="Current"><option value="a">A</option></optgroup>
-      <optgroup label="Retired" disabled><option value="b">B</option></optgroup>
+      <optgroup label="More"><option value="b">B</option></optgroup>
     </select>`);
     expect(form.summary).toContain("Current: A");
-    expect(parseAskAnswer(form, "b")).toEqual({ error: "mode: Choose only enabled values shown in the form." });
     expect(parseAskAnswer(form, "{}")).toEqual({ data: { mode: "a" } });
+    expect(
+      await projectAskForm(`<select name="mode">
+        <optgroup label="Retired" disabled><option value="old">Old</option></optgroup>
+        <option value="new">New</option>
+      </select>`),
+    ).toBeUndefined();
   });
 
   test("decodes visible entities and sanitizes Discord markup without altering submitted data", async () => {

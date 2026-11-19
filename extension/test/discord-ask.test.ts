@@ -21,18 +21,25 @@ for (const winner of ["Discord", "terminal"] as const) {
     const previous = process.env["DORI_DISCORD_API_BASE"];
     const posts: Array<Record<string, unknown>> = [];
     const questions = Promise.withResolvers<void>();
+    const editResponse = Promise.withResolvers<void>();
     const invalid = Promise.withResolvers<void>();
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       async fetch(req) {
-        if (req.method !== "POST" || new URL(req.url).pathname !== `/channels/${room}/messages`)
+        const path = new URL(req.url).pathname;
+        if (req.method === "PATCH" && path === `/channels/${room}/messages/${question}`) {
+          posts.push((await req.json()) as Record<string, unknown>);
+          questions.resolve();
+          await editResponse.promise;
+          return Response.json({ id: question });
+        }
+        if (req.method !== "POST" || path !== `/channels/${room}/messages`)
           return new Response("unexpected route", { status: 404 });
         if (req.headers.get("authorization") !== "Bot synthetic-ask-token")
           return new Response("wrong test token", { status: 401 });
         posts.push((await req.json()) as Record<string, unknown>);
-        if (posts.length === 1) questions.resolve();
-        else invalid.resolve();
+        if (posts.length > 1) invalid.resolve();
         return Response.json({ id: posts.length === 1 ? question : next });
       },
     });
@@ -65,22 +72,25 @@ for (const winner of ["Discord", "terminal"] as const) {
       bridge.arm(event, ui, root, "lane");
       const result = ui.formDialog(html);
       await questions.promise;
-      expect(posts[0]?.["content"]).toContain("Which backend?");
-      expect(posts[0]?.["allowed_mentions"]).toEqual({ parse: [], replied_user: false });
+      expect(posts[0]?.["content"]).not.toContain("Which backend?");
+      expect(posts[1]?.["content"]).toContain("Which backend?");
+      expect(posts[1]?.["allowed_mentions"]).toEqual({ parse: [], replied_user: false });
       const ownerFile = join(root, "discord-ask-replies", `${room}-${question}`, "owner");
-      await until(() => existsSync(ownerFile));
+      expect(existsSync(ownerFile)).toBe(true);
       const reply = { channel: room, reference: question, message: first, text: "sqlite" };
       if (winner === "Discord") {
         expect(routeDiscordAskReply(root, reply, question)).toBe(false);
         expect(routeDiscordAskReply(root, { ...reply, text: '{"unknown":"no"}' }, owner)).toBe(true);
+        editResponse.resolve();
         await invalid.promise;
-        expect(posts[1]?.["content"]).toContain("not accepted");
+        expect(posts[2]?.["content"]).toContain("not accepted");
         expect(routeDiscordAskReply(root, { ...reply, message: next }, owner)).toBe(true);
         expect(await result).toMatchObject({ data: { backend: "sqlite" } });
         expect(terminalSignal?.aborted).toBe(true);
       } else {
         terminalAnswer.resolve({ data: { backend: "local" } });
         expect(await result).toEqual({ data: { backend: "local" } });
+        editResponse.resolve();
         const dir = join(root, "discord-ask-replies", `${room}-${question}`);
         await until(() => existsSync(join(dir, "closed")));
         expect(routeDiscordAskReply(root, reply, owner)).toBe(true);
@@ -90,6 +100,7 @@ for (const winner of ["Discord", "terminal"] as const) {
       expect(notices).toEqual([]);
     } finally {
       bridge.clear();
+      editResponse.resolve();
       terminalAnswer.resolve(undefined);
       if (previous === undefined) delete process.env["DORI_DISCORD_API_BASE"];
       else process.env["DORI_DISCORD_API_BASE"] = previous;

@@ -67,26 +67,36 @@ async function askOnDiscord(html: string, route: Route, signal: AbortSignal, war
   signal.throwIfAborted();
   const discord = new Discord(fetchHttp, { now: Date.now, sleep: Bun.sleep }, token);
   const path = `/channels/${route.channel}/messages`;
+  const mentions = { parse: [], replied_user: false };
   const post = async (content: string, reference?: string) =>
     discord.call<{ id: string }>(
       "POST",
       path,
       {
         content,
-        allowed_mentions: { parse: [], replied_user: false },
+        allowed_mentions: mentions,
         nonce: randomUUID().replaceAll("-", "").slice(0, 24),
         enforce_nonce: true,
         ...(reference ? { message_reference: { message_id: reference, fail_if_not_exists: true } } : {}),
       },
       requestSignal(signal),
     );
-  const question = await post(
-    `**Cataly ASK**\n${form.summary}\n\nReply to this message with the answer. With multiple fields, send a JSON object keyed by field name.`,
-  );
+  // Discord can show a newly created message before the POST has returned its ID.
+  // Publish only the shell until replies to its exact message ID have an owner.
+  const question = await post("Preparing a Cataly ASK. Wait for the question before replying.");
   if (!isDiscordSnowflake(question?.id)) throw new Error("Discord did not confirm the ASK message ID");
   const mailbox = openDiscordAskMailbox(route.receiverStateDir, route.channel, question.id, route.owner);
   const seen = new Set<string>();
   try {
+    await discord.call(
+      "PATCH",
+      `${path}/${question.id}`,
+      {
+        content: `**Cataly ASK**\n${form.summary}\n\nReply to this message with the answer.`,
+        allowed_mentions: mentions,
+      },
+      requestSignal(signal),
+    );
     while (!signal.aborted) {
       for (const reply of mailbox.replies(seen)) {
         signal.throwIfAborted();

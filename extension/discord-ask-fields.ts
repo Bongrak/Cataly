@@ -24,6 +24,7 @@ export type Field = {
   value: string;
   multi: boolean;
   options: Option[];
+  other?: boolean;
   min?: number;
   max?: number;
   minLength?: number;
@@ -59,6 +60,8 @@ export async function parseAskFields(html: string) {
     if (node.tag === "option" && !["select", "optgroup"].includes(node.parent!.tag)) invalid();
     if (node.tag === "optgroup" && node.parent!.tag !== "select") invalid();
     if (node.tag === "option" && node.children.some((child) => typeof child !== "string")) invalid();
+    // OMP treats disabled optgroups differently from disabled options.
+    if (node.tag === "optgroup" && has(node, "disabled")) invalid();
     if (
       (node.tag === "select" || node.tag === "optgroup") &&
       node.children.some((child) =>
@@ -151,7 +154,7 @@ export async function parseAskFields(html: string) {
           .filter(Boolean)
           .join(": "),
         checked: has(option, "selected"),
-        disabled: has(option, "disabled") || !!ancestor(option, "optgroup")?.attrs.has("disabled"),
+        disabled: has(option, "disabled"),
       }));
       if (!field.multi && !field.options.some((option) => option.checked)) {
         const first = field.options.find((option) => !option.disabled);
@@ -182,6 +185,12 @@ export async function parseAskFields(html: string) {
     if (field.options.length > 32 || new Set(field.options.map((option) => option.value)).size !== field.options.length)
       invalid();
     if (!field.multi && field.options.filter((option) => option.checked).length > 1) invalid();
+    if (
+      field.options.length > 1 &&
+      (field.type === "radio" || field.type === "checkbox") &&
+      !field.options.some((option) => /^\s*other\b/i.test(option.label))
+    )
+      field.other = true;
   }
   return { fields, hidden, context: decode(text(scope)) };
 }

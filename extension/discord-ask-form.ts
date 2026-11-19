@@ -51,6 +51,7 @@ export async function projectAskForm(html: string): Promise<AskForm | undefined>
         `${show(field.name)}: ${display(field.label)} [${flags.join(", ")}${field.multi && field.options.length > 1 ? ", array" : ""}]` +
         (choices ? `; choices: ${choices}` : "") +
         (initial !== undefined ? `; default: ${show(initial)}` : "") +
+        (field.other ? "; Other: include one custom text value" : "") +
         (field.placeholder ? `; hint: ${display(field.placeholder)}` : "") +
         (field.type === "checkbox" && field.options.length === 1 && !field.required ? "; [] clears" : "")
       );
@@ -107,24 +108,33 @@ export function parseAskAnswer(form: AskForm, input: string): { data: AskData } 
       )
         return fail(array ? "Enter an array of choice values." : "Enter one choice value.");
       const values: string[] = value === undefined ? [] : Array.isArray(value) ? value : [value as string];
-      if (
-        new Set(values).size !== values.length ||
-        values.some((item) => !field.options.some((option) => !option.disabled && option.value === item))
-      )
-        return fail("Choose only enabled values shown in the form.");
-      if (field.required && !values.length) return fail(array ? "Select at least one." : "Required.");
+      if (new Set(values).size !== values.length) return fail("Choose only enabled values shown in the form.");
+      const selected = new Set<string>();
+      let other: string | undefined;
+      for (const item of values) {
+        const option = field.options.find((option) => option.value === item);
+        if (option && !option.disabled) selected.add(item);
+        else if (!option && field.other && other === undefined) other = item.trim();
+        else return fail("Choose only enabled values shown in the form.");
+      }
+      const ordered = field.options.filter((option) => selected.has(option.value)).map((option) => option.value);
+      if (other) ordered.push(other);
+      if (field.required && !ordered.length) return fail(array ? "Select at least one." : "Required.");
+      value = array ? ordered : ordered[0];
     } else {
       if (typeof value !== "string" && !(field.type === "number" && typeof value === "number"))
         return fail(field.type === "number" ? "Enter a number." : "Enter text.");
-      const string = String(value);
+      let string = String(value);
       if (!string.trim()) {
         if (field.required) return fail("Required.");
       } else {
         if (field.type === "number") {
-          value = Number(value);
-          if (!Number.isFinite(value)) return fail("Enter a number.");
-          if (field.min !== undefined && (value as number) < field.min) return fail(`Must be at least ${field.min}.`);
-          if (field.max !== undefined && (value as number) > field.max) return fail(`Must be at most ${field.max}.`);
+          const number = Number(value);
+          if (!Number.isFinite(number)) return fail("Enter a number.");
+          if (field.min !== undefined && number < field.min) return fail(`Must be at least ${field.min}.`);
+          if (field.max !== undefined && number > field.max) return fail(`Must be at most ${field.max}.`);
+          value = number;
+          string = String(number);
         }
         if (field.minLength !== undefined && string.length < field.minLength)
           return fail(`Needs at least ${field.minLength} characters.`);

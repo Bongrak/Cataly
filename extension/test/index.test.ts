@@ -612,7 +612,7 @@ describe.skipIf(!existsSync(REAL_ULW))("with the real omp-ulw", () => {
     expect(lane.userMessages).toEqual(["ulw fix it"]);
   });
 
-  test.each(["gpt-6.2-astra", "gpt-6.2-sol"])(
+  test.each(["gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.2-sol-ultrafast"])(
     "native OMP loads the standalone %s preset without losing the retained host boundary",
     async (id) => {
       const { nativeComposition, SOL_MODEL } = await import("../../test/fixtures/omp-native-host/compose.ts");

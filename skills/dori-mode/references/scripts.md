@@ -65,6 +65,11 @@ requires a Codex account that advertises Ultrafast.
 - For `dori launch`, set `"defaultModel": "openai-codex/gpt-6.2-sol-ultrafast"`
   in Cataly's `config.json`. Keep `--model {model}` in `agentCommand` so
   per-lane `--model` overrides still work.
+  To create the native goal before the first turn on external OMP 19, end that
+  template with `"--goal", "{prompt}"` instead of just `"{prompt}"`. Keep
+  OMP's `goal.enabled` on and do not pass a second positional prompt. This
+  setting is for fresh interactive lanes on the external runtime, not the
+  bundled OMP.
 - For `dori harness start`, set the external OMP configuration's
   `modelRoles.default` to `openai-codex/gpt-6.2-sol-ultrafast`. This OMP default
   also applies to other fresh sessions on that configuration that do not

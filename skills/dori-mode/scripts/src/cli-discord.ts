@@ -3,6 +3,7 @@ import { die, every } from "./cli-context.ts";
 import { Discord } from "./messenger/discord.ts";
 import { DiscordChannels, inboundContext } from "./messenger/discord-channels.ts";
 import type { GatewayClock, GatewaySocket } from "./messenger/discord-gateway.ts";
+import { routeDiscordAskReply } from "./messenger/discord-ask-mailbox.ts";
 import { discordInbound, formatDiscordInbound, formatInboundContext } from "./messenger/discord-inbound.ts";
 import type { Emit } from "./messenger/discord-inbound-api.ts";
 import { discordInboundLive } from "./messenger/discord-inbound-live.ts";
@@ -89,6 +90,8 @@ export const discordInboundCommand = async (
     const where = context ? inboundContext(discord, new DiscordChannels(stateDir), realClock.now) : undefined;
     // Context and the owner line remain one stdout group, after the owe is published.
     const emit: Emit = async (message, signal) => {
+      signal?.throwIfAborted();
+      if (routeDiscordAskReply(stateDir, message, ownerId)) return;
       const text = where
         ? `${formatDiscordInbound(message)}\n${formatInboundContext(message, await where(message.channel))}`
         : formatDiscordInbound(message);

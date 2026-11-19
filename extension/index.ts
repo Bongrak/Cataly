@@ -29,6 +29,7 @@ import {
 import type { MonitorSpec } from "../src/update/deployment-types.ts";
 import { bootstrapMonitors, MONITOR_BOOTSTRAP_FLAG, recordedIntake } from "./bootstrap.ts";
 import { RuntimeHealthWriter } from "./deployment-health.ts";
+import { DiscordAsk } from "./discord-ask.ts";
 import { type PromptModel, withLaneBookkeeping } from "./lane-bookkeeping.ts";
 import { MONITOR_DESCRIPTION, Monitors } from "./monitor";
 import { bumpAttempts, MAX_CONTINUATIONS, openOwes, recordOwes, reminder } from "../skills/dori-mode/scripts/src/owes";
@@ -238,6 +239,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   let goalToolAdded = false;
   let paneWritten: string | undefined;
   const approvals = new Set<string>();
+  const discordAsk = new DiscordAsk();
   let managedRestorePending = process.env.DORI_MANAGED_STARTUP === "1";
   const monitors = new Monitors(
     async (content, delivery) => {
@@ -419,7 +421,15 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
       if (!approvals.delete(event.toolCallId) || !role) return;
       savePane(ctx);
     });
+    // The awaited preflight runs before the built-in opens its form; execution events can arrive later.
+    pi.on("tool_call", (event, ctx) => {
+      const id = ctx.sessionManager.getSessionId();
+      if (role && stateDir && ctx.agent.kind === "main" && id === session?.id && approvals.size === 0)
+        discordAsk.arm(event, ctx.ui, stateDir, id);
+    });
+    pi.on("tool_execution_end", (event) => discordAsk.finish(event));
     pi.on("session_shutdown", () => {
+      discordAsk.clear();
       monitors.stopAll();
       retirePane();
     });
@@ -428,6 +438,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   const syncMain = async (ctx: DoriContext, branch: readonly SessionEntry[], bootstrap = false): Promise<void> => {
     const sessionId = ctx.sessionManager.getSessionId();
     // Monitors belong to the Dori session that started them; their lines must not wake whatever session comes next.
+    if (session?.id !== sessionId || !role) discordAsk.clear();
     if (session?.id !== sessionId || role !== "dori") monitors.stopAll();
     if (session?.id !== sessionId) {
       session = { id: sessionId, startedAt: new Date().toISOString() };
@@ -511,6 +522,7 @@ export default async function ompDori(pi: DoriApi): Promise<void> {
   // Registered before omp-ulw so its restore handlers see this event's role.
   for (const eventName of ["session_start", "session_switch", "session_branch", "session_tree"] as const) {
     pi.on(eventName, async (event, ctx) => {
+      if (eventName !== "session_start" && ctx.agent.kind === "main") discordAsk.clear();
       const branch = ctx.sessionManager.getBranch();
       let flaggedRole = false;
       if (ctx.agent.kind === "sub") {

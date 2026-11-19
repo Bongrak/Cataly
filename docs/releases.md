@@ -191,6 +191,39 @@ The cursor is committed under `<stateDir>/discord-inbound/<channelId>.json` in a
 
 Only a remote history-read 403/404 removes an unavailable discovered channel; explicitly configured targets still fail on those responses. Content conversion, delivery and local cursor failures are not permission loss. In Gateway mode they stop intake before later queued messages can advance past the failed message. If an already watched channel's cursor disappears, intake reports the missing-state error rather than silently dropping live messages or recreating a baseline. First-seen scope-all channels still seed their new cursors as described above.
 
+#### Answering native OMP ASK from Discord
+
+This is off unless you add the exact Dori or lane session ID to
+`<stateDir>/discord-ask.json`. Keep this file and the bot token file owned and
+mode `0600`. The configured bot needs permission to post in the designated
+private channel or thread, and `dori inbound discord` must already watch it
+for the same owner with the same state directory.
+
+```json
+{
+  "sessions": {
+    "<OMP-session-id>": {
+      "channel": "<Discord-channel-or-thread-id>",
+      "owner": "<Discord-owner-id>",
+      "tokenFile": "/absolute/path/to/discord-token"
+    }
+  }
+}
+```
+
+Use Discord's **Reply** on the bot's ASK message. For a single field, plain
+text can be enough; for multiple fields, submit a JSON object using the field
+names in the question. An invalid reply explains the error without submitting
+the form; reply to the original ASK again. A different room, a new message, or
+a reply to another question does not answer the open form.
+
+Local input still works and the first valid submission wins. Forms that
+cannot be represented faithfully, including password and file inputs, stay
+local. ASK answers do not approve tools or get queued as ordinary lane input.
+An OMP session switch, cancellation, or restart ends the open question. This
+feature posts question text to the configured room; do not select a public
+room for a session that asks about private work.
+
 #### Real-time Gateway mode
 
 Add `--gateway` to receive owner messages live instead of on the next poll. The receiver keeps one Gateway connection that subscribes only to `GUILD_MESSAGES`, `DIRECT_MESSAGES` and `MESSAGE_CONTENT`; it sends no presence update. **`MESSAGE_CONTENT` is a privileged intent: enable Message Content Intent for the bot in the Developer Portal**, otherwise Discord closes the connection with code 4014 and intake stops with an error naming it. **`--gateway` ignores `--loop`, including `--loop 0`; it runs until stopped.**

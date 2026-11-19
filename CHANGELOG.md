@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- An opted-in Dori or lane session can post supported native OMP ASK forms to its designated Discord room. Only the configured owner's reply to that exact message answers the open tool call; terminal input and tool approval behavior stay unchanged.
+
 - Opted-in Dori monitors can restart unexpectedly exited receiver processes with a bounded retry policy. The policy survives session resume and managed handoff; clean exits, explicit stops, and monitors without the policy retain their existing behavior.
 
 - Document opt-in GPT-6.2 Sol Ultrafast defaults for external OMP 19 lanes and cover the alias in the GPT-6.2 prompt integration. Explicit external commands no longer require a consumer-native receipt; managed launchers retain receipt checks and their pinned runtime.

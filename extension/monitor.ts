@@ -23,8 +23,6 @@ type Running = {
   readonly session: string;
   readonly signal: AbortSignal;
   readonly restart?: MonitorSpec["restart"];
-  readonly startedAt: number;
-  readonly attempt: number;
   stopped: boolean;
 };
 
@@ -92,11 +90,19 @@ export class Monitors {
       signal: this.#generation.signal,
       stopped: false,
       restart,
-      startedAt: performance.now(),
-      attempt,
     };
     this.#running.set(name, entry);
-    void Promise.all([this.#pump(entry, proc.stdout, "stdout"), this.#pump(entry, proc.stderr, "stderr"), proc.exited])
+    let previous = attempt;
+    const startedAt = performance.now();
+    const exited =
+      restart === "on-failure"
+        ? proc.exited.then((code) => {
+            // Only time spent running the child resets a failure streak, not blocked output delivery.
+            if (performance.now() - startedAt >= 60_000) previous = 0;
+            return code;
+          })
+        : proc.exited;
+    void Promise.all([this.#pump(entry, proc.stdout, "stdout"), this.#pump(entry, proc.stderr, "stderr"), exited])
       .then(async ([, , code]) => {
         if (this.#running.get(name) !== entry) return;
         const retryable = restart === "on-failure" && (code !== 0 || Boolean(proc.signalCode));
@@ -107,7 +113,7 @@ export class Monitors {
         }
         this.#running.delete(name);
         if (entry.stopped || !this.#current(entry)) return;
-        if (retryable && this.#scheduleRestart(entry)) return;
+        if (retryable && this.#scheduleRestart(entry, previous)) return;
         await this.#queue(
           entry,
           `[${name}] monitor exited (${proc.signalCode ? `signal ${proc.signalCode}` : `code ${code}`}): ${argv.join(" ")}`,
@@ -127,9 +133,7 @@ export class Monitors {
     return { name, argv: entry.argv, filter, cwd, pid: proc.pid, ...(restart ? { restart } : {}) };
   }
 
-  #scheduleRestart(entry: Running): boolean {
-    // A healthy minute ends a failure streak. A crashing command gets at most three automatic attempts.
-    const previous = performance.now() - entry.startedAt >= 60_000 ? 0 : entry.attempt;
+  #scheduleRestart(entry: Running, previous: number): boolean {
     if (previous >= 3) return false;
     const timer = setTimeout(() => {
       if (this.#restarts.get(entry.name)?.entry !== entry) return;

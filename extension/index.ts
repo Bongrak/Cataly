@@ -26,6 +26,7 @@ import {
   readPaneState,
   writePaneState,
 } from "../skills/dori-mode/scripts/src/lane-state";
+import type { MonitorSpec } from "../src/update/deployment-types.ts";
 import { bootstrapMonitors, MONITOR_BOOTSTRAP_FLAG, recordedIntake } from "./bootstrap.ts";
 import { RuntimeHealthWriter } from "./deployment-health.ts";
 import { type PromptModel, withLaneBookkeeping } from "./lane-bookkeeping.ts";
@@ -159,13 +160,6 @@ const recordedGoal = (branch: readonly SessionEntry[]): PaneState["goal"] => {
     goal = (entry.mode === "goal" || entry.mode === "goal_paused") && isGoal(data) ? goalOf(data) : { status: "none" };
   }
   return goal;
-};
-
-type MonitorSpec = {
-  readonly name: string;
-  readonly argv: readonly string[];
-  readonly filter: string;
-  readonly cwd: string;
 };
 
 /**

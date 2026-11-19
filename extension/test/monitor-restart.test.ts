@@ -75,3 +75,36 @@ for (const ending of ["stop", "shutdown", "session switch"] as const) {
     }
   });
 }
+
+test("delivery failure after an opted-in child exits does not start a replacement", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cataly-monitor-delivery-"));
+  const runs = join(root, "runs");
+  const started = Promise.withResolvers<void>();
+  const delivery = Promise.withResolvers<void>();
+  const monitors = new Monitors(
+    (text) => {
+      if (!text.includes("fixture-start")) return;
+      started.resolve();
+      return delivery.promise;
+    },
+    () => "owner",
+    5,
+    20,
+  );
+  try {
+    const argv = cmd(
+      `require("node:fs").appendFileSync(${JSON.stringify(runs)}, "start\\n"); console.log("fixture-start"); process.exit(3)`,
+    );
+    monitors.start("receiver", argv, "^fixture-start", process.cwd(), "owner", "on-failure");
+    await started.promise;
+    // Keep delivery unresolved past the real retry delay to exercise the process/delivery race.
+    await Bun.sleep(60);
+    delivery.reject(new Error("fixture delivery error"));
+    await until(() => monitors.specs().length === 0);
+    expect(readFileSync(runs, "utf8")).toBe("start\n");
+  } finally {
+    delivery.resolve();
+    monitors.stopAll();
+    rmSync(root, { recursive: true });
+  }
+});

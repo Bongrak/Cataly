@@ -63,6 +63,7 @@ export class Monitors {
     this.#batchMs = batchMs;
     this.#restartMs = restartMs;
   }
+
   start(
     name: string,
     argv: readonly string[],
@@ -98,9 +99,15 @@ export class Monitors {
     void Promise.all([this.#pump(entry, proc.stdout, "stdout"), this.#pump(entry, proc.stderr, "stderr"), proc.exited])
       .then(async ([, , code]) => {
         if (this.#running.get(name) !== entry) return;
+        const retryable = restart === "on-failure" && (code !== 0 || Boolean(proc.signalCode));
+        if (retryable && !entry.stopped && this.#current(entry)) {
+          // Do not replace the child while delivery from this incarnation can still fail.
+          await this.#flush();
+          if (this.#running.get(name) !== entry) return;
+        }
         this.#running.delete(name);
         if (entry.stopped || !this.#current(entry)) return;
-        if (restart === "on-failure" && (code !== 0 || proc.signalCode) && this.#scheduleRestart(entry)) return;
+        if (retryable && this.#scheduleRestart(entry)) return;
         await this.#queue(
           entry,
           `[${name}] monitor exited (${proc.signalCode ? `signal ${proc.signalCode}` : `code ${code}`}): ${argv.join(" ")}`,
@@ -129,7 +136,8 @@ export class Monitors {
       this.#restarts.delete(entry.name);
       if (entry.stopped || !this.#current(entry)) return;
       try {
-        this.#spawn({ ...entry, filter: entry.filter.source }, entry.session, previous + 1);
+        const { name, argv, filter, cwd, restart, session } = entry;
+        this.#spawn({ name, argv, filter: filter.source, cwd, restart }, session, previous + 1);
       } catch (error) {
         void this.#queue(entry, `[${entry.name}] monitor restart failed: ${String(error).slice(0, 1024)}`).catch(
           (reportError: unknown) => console.error("monitor restart reporting failed", reportError),

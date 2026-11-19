@@ -54,7 +54,7 @@ export type PruneFixture = {
  * only the fixture's processes: the host's unreadable or privileged processes and its Dori writers (other
  * lanes' launches) stay out unless a test passes its own reader or process table.
  */
-export function pruneFixture(): PruneFixture {
+export function pruneFixture(files = ownProcessFiles): PruneFixture {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "dori-native-prune-")));
   roots.push(root);
   const home = join(root, "home");
@@ -70,7 +70,7 @@ export function pruneFixture(): PruneFixture {
   const prune = (options: NativeCachePruneOptions = {}, more: readonly string[] = []): NativeCachePrune =>
     pruneNativeCache(home, [], [refs, ...more], {
       readCwds: ownProcessCwds,
-      files: ownProcessFiles,
+      files,
       table: () => "",
       graceMs: 0,
       ...options,

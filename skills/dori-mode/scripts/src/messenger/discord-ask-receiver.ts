@@ -185,7 +185,7 @@ export function openDiscordAskReceiver(
         owner,
         explicit: configured,
         watched: channels,
-        expiresAt: Math.min(now + TTL_MS, verifiedUntil),
+        expiresAt: Math.floor(Math.min(now + TTL_MS, verifiedUntil)),
       };
       const text = JSON.stringify(body);
       if (Buffer.byteLength(text) > MAX_BYTES) throw new Error("Discord ASK receiver route exceeds size limit");
